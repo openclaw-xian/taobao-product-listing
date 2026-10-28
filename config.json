@@ -1,0 +1,25 @@
+{
+  "chrome": "",
+  "chrome_profile": "C:\\Users\\<你>\\.openclaw\\chrome_taobao",
+  "node": "",
+  "npm": "",
+  "python": "",
+  "playwright_core": "",
+  "workdir": "",
+  "default_port": 9120,
+  "reuse_profile": true,
+  "shops": {
+    "示例店": {
+      "port": 9120,
+      "note": "千牛已登录（2026-10-10 起）；profile C:\\Users\\<你>\\.openclaw\\chrome_taobao"
+    }
+  },
+  "_note_shops": "★ 多店铺唯一权威，**不要写死店铺**。淘宝这边一店 = 一个千牛账号 = 一个独立 Chrome 实例（独立 --user-data-dir）+ 独立调试端口。登录千牛后把店名和端口填进来（例：\"店名\": {\"port\": 9120, \"note\": \"...\"}），代码不用动。用 preflight.ps1 -Shop 店名 或 run_listing.ps1 -Shop 店名 -ProductId … -CatId … -Cat … 一次跑一家；不传 -Shop 时：只登记一家就直接用它，登记多家会要求你指定（不猜）。",
+  "_note_shops_extra": "同一 Chrome 里可能同时登着拼多多/抖店 —— 流程只挑 taobao 域名的页面。",
+  "_note_python": "PATH 上的 python 可能缺 openpyxl/Pillow；resolve_env 优先 config.python > TB_PYTHON > MIMO_PYTHON",
+  "_note_playwright": "playwright_core 一般**留空**：技能自带 tools/npm/node_modules/playwright-core（约13MB），解析顺序 TB_PLAYWRIGHT > 技能自带 > 机器级；查当前用哪份：node scripts/which_pw.js",
+  "_note_selftest": "改过脚本先跑 scripts/selftest.ps1（机械检查，含 preflight）；-Quick 跳过 CDP 端口部分",
+  "_note_target": "千牛工作台 https://qn.taobao.com/home.htm/QnworkbenchHome/ ；发布入口 https://item.upload.taobao.com/sell/ai/category.htm ；发布表单 https://item.upload.taobao.com/sell/v2/publish.htm?catId=...",
+  "_note_source": "商品数据/素材来自素材库：D:\\wps云文档\\...\\本地图片素材库\\AI\\accio+jst\\<素材包>\\ —— 数据在 发品excel\\<商品号>.xlsx（含「淘宝」sheet），图在 淘宝\\<商品号>\\（1比1主图 / 3比4主图 / 宝贝详情 / 规格图片 / SKU搜索主图）",
+  "_note_principle": "★ 淘宝发布页改版频繁：本技能的笔记只是参考，**一切以现场 DOM 为准**（每步先读回再动作）"
+}
