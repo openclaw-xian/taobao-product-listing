@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 tests/_*
 recon_save.png
+scripts/_*.log
