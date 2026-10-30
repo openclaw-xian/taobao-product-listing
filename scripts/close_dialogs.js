@@ -25,23 +25,30 @@ function arg(name, dflt) {
 }
 const PORT = String(arg('port', process.env.TB_PORT || '9120'));
 const MATCH = String(arg('match', '批量导入'));
+const ALL = !!arg('all', false);          // ★ 关掉**任何**可见弹窗（整链每步之间用这个兜底）
 const LIST_ONLY = !!arg('list', false);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const say = (...a) => console.log('  ' + a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
 
-const scan = (match) => {
+// ⚠️ Playwright 的 evaluate 只传**一个** arg → 用一个对象把 match/all 一起带进去（两个参数会被丢掉）。
+const scan = (opts) => {
+  const match = (opts && opts.match) || '';
+  const all = !!(opts && opts.all);
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  // --all 模式下**不关**正在使用的面板：误关会让正在做的那一步全崩
+  const KEEP = ['批量填充规格主图', '本地上传', '批量导入'];
   const dlgs = Array.from(document.querySelectorAll('.next-dialog')).filter(vis);
   return dlgs.map((d) => {
     const txt = clean(d.innerText);
+    const keep = all && KEEP.some((k) => txt.includes(k));
     const btns = Array.from(d.querySelectorAll('button')).filter(vis).map((b) => {
       const r = b.getBoundingClientRect();
       return { 文案: clean(b.innerText).slice(0, 12), 中: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } };
     });
     const rect = d.getBoundingClientRect();
     return {
-      匹配: txt.includes(match),
+      匹配: all ? !keep : (match !== '' && txt.includes(match)),
       文本: txt.slice(0, 90),
       位置: { x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) },
       按钮: btns,
@@ -57,39 +64,29 @@ const scan = (match) => {
     const cands = browser.contexts()[0].pages().filter((p) => /publish\.htm/.test(p.url()));
     const page = cands[cands.length - 1];
     if (!page) { say('没有 publish.htm 页'); process.exitCode = 1; return; }
-    const before = await page.evaluate(scan, MATCH);
-    say('可见弹窗 %d 个：' % before.length);
+    const before = await page.evaluate(scan, { match: MATCH, all: ALL });
+    say(`可见弹窗 ${before.length} 个（模式：${ALL ? '--all 全关' : '匹配「' + MATCH + '」'}）：`);
     before.forEach((d, i) => say(`  [${i}] 匹配=${d.匹配} 位置=${JSON.stringify(d.位置)} 文本=${d.文本}`));
     if (LIST_ONLY) { process.exitCode = 0; return; }
     const hits = before.filter((d) => d.匹配);
     if (!hits.length) { say('没有需要关的弹窗 ✓'); process.exitCode = 0; return; }
 
     for (const h of hits) {
-      // 优先「取消」/「关闭」；兜底右上角 ✕（next-dialog-close）
-      const b = h.按钮.find((x) => /取消|关闭|完成/.test(x.文案));
+      // 优先「取消」/「关闭」/「完成」/「知道了」；兜底点这个弹窗自己的**右上角 ✕**
+      const b = h.按钮.find((x) => /^(取消|关闭|完成|知道了|好的)/.test(x.文案));
       if (b) {
         await page.mouse.click(b.中.x, b.中.y);
         say(`点「${b.文案}」关闭`);
       } else {
-        const close = await page.evaluate(() => {
-          const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-          const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-          const d = Array.from(document.querySelectorAll('.next-dialog')).filter(vis).find((x) => clean(x.innerText).includes('批量导入'));
-          if (!d) return null;
-          const el = d.querySelector('.next-dialog-close,.next-close,.next-dialog-close-icon') || (() => {
-            const r = d.getBoundingClientRect();
-            return document.elementFromPoint(r.right - 14, r.top + 14);
-          })();
-          if (!el) return null;
-          const r2 = el.getBoundingClientRect();
-          return { x: Math.round(r2.left + r2.width / 2), y: Math.round(r2.top + r2.height / 2) };
-        });
-        if (close) { await page.mouse.click(close.x, close.y); say('点右上角 ✕ 关闭'); }
-        else { say('⚠ 没找到关闭按钮'); }
+        // ★ 用这个弹窗自己的位置算右上角（原来写死找「批量导入」那个弹窗，--all 模式下会点错对象）
+        const x = h.位置.x + h.位置.w - 14;
+        const y = h.位置.y + 14;
+        await page.mouse.click(x, y);
+        say(`点右上角 ✕ 关闭 @ ${x},${y}`);
       }
       await sleep(1200);
     }
-    const after = await page.evaluate(scan, MATCH);
+    const after = await page.evaluate(scan, { match: MATCH, all: ALL });
     const left = after.filter((d) => d.匹配).length;
     say('关完后仍匹配的弹窗:', left);
     process.exitCode = left ? 1 : 0;

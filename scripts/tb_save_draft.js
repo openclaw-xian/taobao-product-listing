@@ -139,6 +139,26 @@ const readState = () => {
       say('再确认:', await page.evaluate(readState));
     }
     console.log('\n' + JSON.stringify({ ok, 状态: await page.evaluate(readState) }, null, 1));
+
+    // ★ 保存被**平台上限**拦住时，把原因翻译成"人话 + 怎么办"。
+    //   实测/同事反馈：草稿箱或**该类目**的草稿数量有上限，超了就存不进去，
+    //   而此时页面不会报"出错项"，只弹一条提示 —— 不说清楚的话看到的就是"保存失败"四个字。
+    if (!ok) {
+      const bag = [].concat(toast.提示节点 || [], [toast.页面尾部文本 || '', toast.出错项 || '']);
+      const all = bag.join(' ');
+      const 上限 = /草稿.{0,12}(上限|最多|不能超过|已达)|(上限|最多)\s*\d+\s*条/.test(all);
+      say('');
+      if (上限) {
+        say('★ 保存被**草稿数量上限**拦住（不是技能填错）');
+        say('   平台原文片段：' + (all.match(/[^。；]{0,60}(上限|最多|已达)[^。；]{0,30}/) || ['（没抓到原文，见上面「点击后提示」）'])[0]);
+        say('   怎么办：去「我的淘宝/千牛 → 商品管理 → 草稿箱」删掉旧草稿（或换一个类目/换一家店）后再跑这一步。');
+        say('   ⚠️ 在存成功之前，页面上填的东西**只活在当前页面里**：别刷新、别关页。');
+      } else {
+        say('★ 保存草稿没成功（且未识别为「数量上限」）—— 请看上面「点击后提示」里的原文');
+        say('   常见原因：必填项还没齐 / 页面有校验未过 / 草稿箱满。');
+        say('   ⚠️ 页面上填的东西只活在当前页面里：别刷新、别关页。');
+      }
+    }
     process.exitCode = ok ? 0 : 1;
   } finally { await browser.close().catch(() => {}); }
 })().catch((e) => { console.error('FAIL:', e.message); process.exit(1); });

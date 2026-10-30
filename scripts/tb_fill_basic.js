@@ -106,8 +106,45 @@ async function fillInputByPid(page, pid, want) {
 
 // ★ auto-complete 型下拉（**品牌**就是这种）：候选列表不可靠，但**直接在输入框打字 + 点空白触发**就生效
 //   （用户 2026-10-10 验证：品牌框点一下 → 打「无品牌」→ 点空白 → 值就对了）
+// ★ 点击前先查**遮挡**：品牌框在属性区中间，只要页面上还停着一个浮层（批量导入 / 上传结果 /
+  //   平台公告等），真实鼠标点就会打在浮层上 → 字打不进去、读回为空。
+  //   实测（同事反馈「品牌输入被残留遮罩挡住」）就是这么发生的。这里：先关遮挡物，再**重新取坐标**。
+async function clearOverlayAt(page, x, y) {
+  const info = await page.evaluate((p) => {
+    const cls = (e) => String((e && e.getAttribute && e.getAttribute('class')) || '');
+    const el = document.elementFromPoint(p.x, p.y);
+    if (!el) return { blocked: false };
+    // 命中的是 input / 它内部 → 没被挡
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || el.closest('#sell-field-p-20000')) return { blocked: false };
+    const dlg = el.closest('.next-dialog,.next-overlay-wrapper,[class*=overlay],[class*=mask]');
+    return { blocked: true, tag, cls: cls(el).slice(0, 50), inDialog: !!dlg, dialogText: dlg ? String(dlg.innerText || '').replace(/\s+/g, ' ').slice(0, 60) : null };
+  }, { x, y }).catch(() => ({ blocked: false }));
+  if (!info.blocked) return { ok: true, blocked: false };
+  // 关掉遮挡物：优先按钮，兜底 Esc（注意：Esc 会顺手关掉规格抽屉，所以只在"确实被遮"时才按）
+  let closed = false;
+  const btn = await page.evaluate(() => {
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const b = Array.from(document.querySelectorAll('.next-dialog button,[class*=overlay] button')).filter(vis)
+      .find((x) => /^(取消|关闭|知道了|好的|完成)/.test(clean(x.innerText)));
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), 文案: clean(b.innerText) };
+  }).catch(() => null);
+  if (btn) {
+    await page.mouse.click(btn.x, btn.y);
+    closed = '点了「' + btn.文案 + '」';
+  } else {
+    await page.keyboard.press('Escape').catch(() => {});
+    closed = '按了 Esc';
+  }
+  await sleep(1500);
+  return { ok: true, blocked: true, 遮挡: info, 处理: closed };
+}
+
 async function pickAutoComplete(page, pid, want) {
-  const c = await page.evaluate((p) => {
+  const locate = () => page.evaluate((p) => {
     const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const box = document.querySelector('#sell-field-p-' + p);
     if (!box) return null;
@@ -119,8 +156,16 @@ async function pickAutoComplete(page, pid, want) {
     const r = inp.getBoundingClientRect();
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), 现: inp.value };
   }, pid);
+  let c = await locate();
   if (!c) return { ok: false, why: 'no_input' };
   if (c.现 === want) return { ok: true, already: true, 读回: c.现 };
+  // ★ 被遮 → 关遮挡物 → **重新取坐标**（关掉浮层后页面会回流，旧坐标失效）
+  const ov = await clearOverlayAt(page, c.x, c.y);
+  if (ov.blocked) {
+    c = await locate();
+    if (!c) return { ok: false, why: 'no_input_after_clear' };
+    say('   品牌框原先被遮挡 → ' + ov.处理 + '，已重新取坐标');
+  }
   await page.mouse.move(c.x, c.y);
   await sleep(200);
   await page.mouse.click(c.x, c.y);

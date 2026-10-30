@@ -43,14 +43,35 @@ if (Array.isArray(PRODUCT.colors) && PRODUCT.colors.length) COLORS = PRODUCT.col
 //   按子串永远猜不中，而且这种值也做不了文件名。
 const SPEC_MAP = PRODUCT.spec_images || {};
 const picked = ONLY ? [String(ONLY)] : COLORS;
-const specFiles = fs.readdirSync(DIR).filter((f) => /规格图-.*\.(jpe?g|png)$/i.test(f)).sort();   // 通用：不写死商品前缀
+// ★ 判据放宽（2026-10-14 同事实测踩到）：原来只认 `/规格图-.*\.(jpe?g|png)$/` ——
+//   ① 文件名里必须带「规格图-」，同事素材包按自己习惯命名（`卡其色.jpg`）就被**整批过滤掉**；
+//   ② 扩展名漏了 webp/bmp/gif。
+//   现在：**任何图片文件都收**；只是「带规格图-、或命中 product.json 映射」的排在前面优先用。
+const IMG_EXT = /\.(jpe?g|png|webp|bmp|gif)$/i;
+const allImgs = fs.readdirSync(DIR).filter((f) => IMG_EXT.test(f));
+const specFiles = allImgs.slice().sort((a, b) => {
+  const sa = /规格图-/.test(a) ? 0 : 1;
+  const sb = /规格图-/.test(b) ? 0 : 1;
+  return sa - sb || a.localeCompare(b);
+});
+if (!allImgs.length) {
+  console.log(`  ★ 规格图片目录里没有图片（${DIR}）→ 这一步会空转`);
+} else if (!specFiles.some((f) => /规格图-/.test(f))) {
+  console.log(`  ⚠ 规格图片目录里 ${allImgs.length} 张图**都不含「规格图-」字样**：将按颜色名匹配 / product.json 映射来找图。`);
+  console.log(`     更稳的做法：文件名写成 \`<商品号>规格图-<颜色>.jpg\`，或在素材包 Excel 的「规格图片文件名」列里逐 SKU 写明。`);
+}
 const fileOf = (c) => {
   const m = SPEC_MAP[c];
   if (m) {
-    if (specFiles.includes(m)) return m;
-    console.log(`  ⚠ product.json 指定的规格图不在目录里：${m}（回退按颜色名猜）`);
+    if (allImgs.includes(m)) return m;
+    const mBase = String(m).toLowerCase();
+    const hit = allImgs.find((f) => f.toLowerCase() === mBase || f.toLowerCase().includes(mBase) || mBase.includes(f.toLowerCase()));
+    if (hit) return hit;
+    console.log(`  ⚠ product.json 指定的规格图不在目录里：${m}（回退按颜色名匹配）`);
   }
-  return specFiles.find((f) => f.includes(c));
+  // 颜色名匹配：先找带「规格图-」的，再退到任意文件名
+  const byColor = allImgs.filter((f) => f.includes(c));
+  return byColor.find((f) => /规格图-/.test(f)) || byColor[0] || (allImgs.length === 1 ? allImgs[0] : undefined);
 };
 if (Object.keys(SPEC_MAP).length) console.log(`  规格图映射：product.json 指定了 ${Object.keys(SPEC_MAP).length} 个颜色`);
 
@@ -121,7 +142,10 @@ const materialFrame = (page) => page.frames().filter((f) => /sucai-selector-ng|h
 async function uploadSpecs(page) {
   const fr = materialFrame(page);
   if (!fr) return { ok: false, why: 'no_frame' };
-  const paths = specFiles.map((f) => path.join(DIR, f));
+  // ★ 只上传**这一步实际要用到**的那些图（不要整个目录全传：目录里可能有几十张，
+  //   全传既慢又会在图片空间里堆无用图）。
+  const need = Array.from(new Set(picked.map((c) => fileOf(c)).filter(Boolean)));
+  const paths = need.map((f) => path.join(DIR, f));
   const [ch] = await Promise.all([
     page.waitForEvent('filechooser', { timeout: 12000 }).catch(() => null),
     fr.locator('button:has-text("本地上传")').first().click({ force: true, timeout: 8000 }).catch(() => {}),

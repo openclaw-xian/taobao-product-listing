@@ -134,11 +134,20 @@ const pageRead = () => {
       const inp = inputs.find((i) => !/~/.test(i.getAttribute('name') || '')) || inputs[0];
       return inp ? inp.value : null;
     });
-    chk('品牌', brandVal, ATTRS['品牌'], !ATTRS['品牌'] || brandVal === ATTRS['品牌']);
+    // ★ 文本项比较前**归一化**（2026-10-14 同事报「货号假失败」）：
+    //   素材包 Excel 里的值极容易带 首尾空格 / 全角空格 / 零宽字符（\u200b-\u200d、\ufeff），
+    //   而页面读回是干净的 → 严格全等就报 ✗，看着像技能填错了，其实两边是同一个值。
+    const norm = (v) => String(v == null ? '' : v)
+      .replace(/[\u200b-\u200d\ufeff]/g, '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const same = (a, b) => norm(a) === norm(b);
+    chk('品牌', brandVal, ATTRS['品牌'], !ATTRS['品牌'] || same(brandVal, ATTRS['品牌']));
     chk('品牌（页面上读到的字段）', st.属性['品牌'], '（仅参考，可能读到货号）', true);
-    chk('主体材质', st.属性['主体材质'], ATTRS['主体材质'], st.属性['主体材质'] === ATTRS['主体材质']);
-    chk('适用猫体型', st.属性['适用猫体型'], ATTRS['适用猫体型'], st.属性['适用猫体型'] === ATTRS['适用猫体型']);
-    chk('货号', st.属性['货号'], ATTRS['货号'], st.属性['货号'] === ATTRS['货号']);
+    chk('主体材质', st.属性['主体材质'], ATTRS['主体材质'], same(st.属性['主体材质'], ATTRS['主体材质']));
+    chk('适用猫体型', st.属性['适用猫体型'], ATTRS['适用猫体型'], same(st.属性['适用猫体型'], ATTRS['适用猫体型']));
+    chk('货号', st.属性['货号'], ATTRS['货号'], same(st.属性['货号'], ATTRS['货号']));
     const lp = Number(st.一口价);
     chk('一口价', st.一口价, String(PRODUCT.list_price) + '（∈有库存SKU价）', lp === Number(PRODUCT.list_price) && PRICES.has(lp));
     chk('总库存', st.总库存, String(EXP_STOCK) + '（= Σ各 SKU 库存）', Number(st.总库存) === EXP_STOCK);

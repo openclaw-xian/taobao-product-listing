@@ -3,6 +3,7 @@
   [string]$CatId = '50003280',
   [string]$Cat = '宠物/宠物食品及用品 > 猫/狗玩具 > 猫抓板',
   [string]$Shop = '',
+  [int]$Port = 0,           # 0 = 按 -Shop / config.shops / default_port 解析
   [string]$ProductDir = '',
   [int]$MainLimit = 0,      # 0 = 按 output\<商品号>\img\1x1 里的实际张数（= 素材目录口径）
   [int]$DetailBatch = 20    # 详情图每批张数：实测一批喂 >20 会被截断
@@ -15,6 +16,42 @@ $env:TB_CATID = $CatId
 $img = "output\$ProductId\img"
 $prod = "output\$ProductId\product.json"
 
+# ★★ 解析本次要用的 CDP 端口并**下发**给所有子脚本。
+#   踩过：原来只设了 TB_CAT / TB_CATID，**没有 TB_PORT** → preflight 按店从 config.json 解析端口、
+#   判定"可以开工"，而后面每个 node 脚本读不到 TB_PORT 就**一律默认 9120** →
+#   同事那家店不在 9120 时，自检全绿、16 步却全部 ECONNREFUSED 全红（看着像技能坏了）。
+$cfgFile = Join-Path $root 'config.json'
+$cfg = $null
+try { $cfg = Get-Content $cfgFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+$shopNames = @()
+if ($cfg -and $cfg.PSObject.Properties.Name -contains 'shops' -and $cfg.shops) {
+  $shopNames = @($cfg.shops.PSObject.Properties.Name | Where-Object { $_ })
+}
+$usePort = 0
+if ($Port -gt 0) {
+  $usePort = $Port
+} elseif ($Shop) {
+  if ($shopNames -contains $Shop) { $usePort = [int]$cfg.shops.$Shop.port }
+  else { Write-Host ("★ config.json 的 shops 里没有店「{0}」；已登记：{1}" -f $Shop, ($shopNames -join ' / ')) -ForegroundColor Red; exit 1 }
+} elseif ($shopNames.Count -eq 1) {
+  $Shop = $shopNames[0]
+  $usePort = [int]$cfg.shops.($shopNames[0]).port
+} elseif ($shopNames.Count -gt 1) {
+  # ★ 多店时**不猜**：猜错就是"填到了另一家店"。要么 -Shop，要么 -Port。
+  Write-Host ("★ 已登记 {0} 家店（{1}）→ 请用 -Shop <店名> 或 -Port <端口> 指定这次发哪家" -f $shopNames.Count, ($shopNames -join ' / ')) -ForegroundColor Red
+  exit 1
+} elseif ($cfg -and $cfg.default_port) {
+  $usePort = [int]$cfg.default_port
+}
+if ($usePort -gt 0) {
+  $env:TB_PORT = "$usePort"
+  if ($Shop) { $env:TB_SHOP = $Shop }
+  $who = if ($Shop) { "（店：$Shop）" } else { '' }
+  Write-Host ("本次 CDP 端口：{0}{1}" -f $usePort, $who) -ForegroundColor Cyan
+} else {
+  Write-Host "⚠ 解析不到端口（config.json 没有 shops 也没有 default_port）→ 子脚本会各自默认 9120" -ForegroundColor Yellow
+}
+
 # ★ 先过**开工前自检**：环境不通（端口不可达 / 千牛没登录 / 依赖缺）就**直接停**。
 #   实测踩到：调试口的 Chrome 没开时，16 个步骤逐个抛 `connect ECONNREFUSED 127.0.0.1:9120`，
 #   看起来像"技能坏了"，其实只是浏览器没起 —— 白白浪费一整轮。
@@ -22,6 +59,7 @@ $prod = "output\$ProductId\product.json"
 #   多店铺：-Shop 店家名 透传给 preflight（店铺以 config.json 的 shops 为准，别写死）。
 $pre = @{}
 if ($Shop) { $pre['Shop'] = $Shop }
+if ($Port -gt 0) { $pre['Port'] = $Port }
 if ($ProductDir) { $pre['ProductDir'] = $ProductDir }
 & "$PSScriptRoot\preflight.ps1" @pre
 if ($LASTEXITCODE -ne 0) {
@@ -68,6 +106,10 @@ if ($mainTotal -eq 0 -or $detailTotal -eq 0) {
 #   · 收尾加「保存草稿」：本店草稿箱已可写入（门禁 18）
 $steps = [ordered]@{}
 $steps['1 entry/cat/brand']       = "node scripts\tb_enter_form.js --catid $CatId --force --product $prod"
+# ★ 填属性前先清**任何**残留弹窗：实测「批量导入」之类的浮层停在页面正中会盖住中间那排属性
+#   （品牌 p-20000 / 主图案类型 / 适用空间 的坐标全落在它范围内 → 真实鼠标点全部点不中，
+#    表现成「无选项 / 读回为空」，同事那台的"品牌输入被残留遮罩挡住"就是这一类）。
+$steps['1b clear dialogs']        = "node scripts\close_dialogs.js --all"
 $steps['2 title/attrs/code']      = "node scripts\tb_fill_basic.js --product $prod"
 $steps['3 sku/listprice']         = "node scripts\tb_import_sku.js --product $prod"
 $steps['3c recheck attrs']        = "node scripts\tb_fill_basic.js --product $prod"
@@ -92,6 +134,7 @@ if ($detailTotal -gt 0) {
   Write-Host "  [skip] 5 detail images：$img\detail 里没有图" -ForegroundColor Yellow
 }
 $steps['5c close panel']          = "node scripts\close_material_panel.js"
+$steps['5d clear dialogs']        = "node scripts\close_dialogs.js --all"
 $steps['6 spec add-image']        = "node scripts\tb_spec_add_image.js --product $prod"
 $steps['7 spec images']           = "node scripts\tb_fill_spec_images.js --dir $img\spec --product $prod"
 $steps['7b verify spec images']   = "node tests\verify_spec_images.js"
