@@ -254,6 +254,7 @@ def main():
     #   实测硬编码白名单会漏：地毯类目（50000582）的 编织工艺 / 可定制性 / 售卖方式 / 适用场景 /
     #   主图案类型 / 产地 都不在名单里 → 页面必填项填不上。
     auto = []
+    required_attrs = []          # ★ R4 里 required=true 的属性名 → 填表时"匹配不上"才判失败
     for c in range(1, ws.max_column + 1):
         raw = ws.cell(4, c).value
         if not raw or "{" not in str(raw):
@@ -267,6 +268,8 @@ def main():
             continue
         if not re.match(r"^[\u4e00-\u9fa5][\u4e00-\u9fa5A-Za-z0-9()（）/、]*$", k):
             continue
+        if am.get("required") is True:
+            required_attrs.append(k)
         v = ws.cell(5, c).value
         if v not in (None, ""):
             attributes[k] = v
@@ -297,6 +300,9 @@ def main():
         "title": ws.cell(5, find_col_title(cm)).value if "宝贝标题" in cm else None,
         "brand_hint": ws.cell(5, cm["品牌"] - 1).value if "品牌" in cm else None,
         "attributes": attributes,
+        # ★ 必填属性名单（来自素材包 R4 的 required 元数据）。填表脚本据此决定
+        #   「源值不在本类目可选值里」时是**警告跳过**（选填）还是**判失败**（必填）。
+        "required_attributes": required_attrs,
         "dimensions": ["颜色分类", "款式"],
         "list_price": list_price,
         "price_set": prices,

@@ -32,6 +32,9 @@ const say = (...a) => console.log('  ' + a.map((x) => (typeof x === 'string' ? x
 
 const PRODUCT = JSON.parse(fs.readFileSync(path.resolve(PRODUCT_PATH), 'utf8'));
 const ATTRS = PRODUCT.attributes || {};
+// ★ 必填属性名单（tb_build.py 从素材包 R4 的 required 元数据带过来的）：
+//   "源值不在本类目可选值里"时 —— 必填判失败、选填警告跳过。见下面 option_not_found 的分流。
+const ARRAY_REQ = Array.isArray(PRODUCT.required_attributes) ? PRODUCT.required_attributes : [];
 // 淘宝标题限 30 汉字 = **60 字符（汉字按 2 字符算）** → 超了自动从尾部砍（用户 2026-10-10 指定）
 function clampTitle(s) {
   let n = 0, out = '';
@@ -430,6 +433,23 @@ async function pickCheckbox(page, pid, want) {
       //   「适用场景」页面上就没有）→ 不算失败，但要显式报出来，不能静默吞掉。
       //   例外：**过半**属性都找不到 → 多半是类目/页面不对，仍然判失败。
       if (!r.ok && r.why === 'no_box') { r = { ok: true, 跳过: '本类目页面上没有这个属性（未填）' }; missing.push(name); }
+      // ★★ `option_not_found` = **素材包给的值不在这个类目的可选值里**（门禁 12：不许静默换近义词）。
+      //   这里按**必填/选填**分流：
+      //     · 必填（required_attributes 里有）→ 仍然判失败，并把可选值原样列出来给人改素材包；
+      //     · 选填 → **警告 + 跳过**，不拖垮整条链。
+      //   实测：地毯类目的「主图案类型 = 条纹」就不在可选值里（那个类目只有 其他/动物图案/…/纯色/流星纹），
+      //   而它是选填 → 原来会把整步（以及后面的 3c）判失败，看着像技能坏了。
+      if (!r.ok && r.why === 'option_not_found') {
+        const req = ARRAY_REQ.includes(name);
+        const val = String(value);
+        if (req) {
+          r = { ...r, ok: false, 必填: true, 值: val, 提示: '★ 必填属性，但素材包给的值不在本类目可选值里 → 请改素材包' };
+          say(`★ [必填] 「${name}」= ${val} 不在本类目可选值里；可选：${(r.候选 || []).join(' / ') || '（见上面弹层文本）'}`);
+        } else {
+          r = { ok: true, 跳过: `选填属性：值「${val}」不在本类目可选值里（未填）`, 可选: (r.候选 || []).slice(0, 12) };
+          say(`⚠ [选填] 「${name}」= ${val} 不在本类目可选值里 → 跳过不填；可选：${(r.候选 || []).join(' / ') || '（无候选）'}`);
+        }
+      }
       res[name] = r;
     }
     if (missing.length) say('⚠ 页面上没有这些属性（已跳过、未填）：' + missing.join('、'));
