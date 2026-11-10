@@ -124,13 +124,21 @@ Write-Host ""
 if ($Pack) {
   Write-Host "==== 数据准备（-Pack：素材包 → product.json / SKU 导入表 / 图片）====" -ForegroundColor Cyan
   $packOut = @(& "$PSScriptRoot\build_from_pack.ps1" -Pack $Pack -ProductId $ProductId -CatId $CatId -ListPrice $ListPrice -SizeSort $SizeSort 2>&1)
+  # ★ 必须看**退出码**，不能只看 product.json 在不在：output\<商品号>\ 里可能留着**上次的旧产物**，
+  #   数据准备其实失败了也会被判成"已就绪"，然后整条链跑在过期数据上（实测踩到）。
+  $packCode = $LASTEXITCODE
   $packOut | ForEach-Object { Write-Host $_ }
-  # ★ 从 build_from_pack 最后一行 PRODUCT_ID= 取回真实商品号（可能被素材目录名改写）。
+  # 从 build_from_pack 最后一行 PRODUCT_ID= 取回真实商品号（可能被素材目录名改写）。
   #   别用 -match + $Matches（在 ForEach-Object/管道里 $Matches 会被覆盖，实测没解析上）→ 用 StartsWith。
   $prefix = 'PRODUCT_ID='
   foreach ($line in @($packOut)) {
     $s = ("" + $line).Trim()
     if ($s.StartsWith($prefix)) { $ProductId = $s.Substring($prefix.Length).Trim() }
+  }
+  if ($packCode -ne 0) {
+    Write-Host ("★ 数据准备失败（build_from_pack 退出码 {0}）→ 停。上面第一行就是原因。" -f $packCode) -ForegroundColor Red
+    Write-Host "  （不会拿 output 里的旧产物凑合往下跑 —— 那样会把过期数据发到店里）"
+    exit 1
   }
   Write-Host ("   → 本次商品号：" + $ProductId) -ForegroundColor Cyan
   # 商品号可能被素材目录名改写 → 路径要重新指向
@@ -163,10 +171,13 @@ function Get-ImgCount([string]$d) {
 }
 $mainTotal = Get-ImgCount "$img\1x1"
 $detailTotal = Get-ImgCount "$img\detail"
-$mainCount = if ($MainLimit -gt 0) { [Math]::Min($MainLimit, $mainTotal) } else { $mainTotal }
+# ★ 淘宝 1:1 主图**平台上限就是 5 张**（发布页原文：「至多可上传5张」）。
+#   原来默认"目录有几张就传几张" → 素材 10 张的商品（MZB-001）会去填第 6 个槽，必然失败。
+$PLATFORM_MAIN_MAX = 5
+$mainCount = if ($MainLimit -gt 0) { [Math]::Min($MainLimit, $mainTotal) } else { [Math]::Min($PLATFORM_MAIN_MAX, $mainTotal) }
 Write-Host ("图片素材：1x1 主图 {0} 张（本次传 {1}）；宝贝详情 {2} 张（每批 {3}）" -f $mainTotal, $mainCount, $detailTotal, $DetailBatch)
 if ($mainTotal -gt $mainCount) {
-  Write-Host ("  ⚠️ -MainLimit 限成 {0} 张：素材目录里还有 {1} 张这次不会传（核对清单的'主图空槽'口径要按 {0} 看）" -f $mainCount, ($mainTotal - $mainCount)) -ForegroundColor Yellow
+  Write-Host ("  ℹ️ 1x1 主图素材 {0} 张，本次传前 {1} 张（平台上限 {2} 张；要改顺序就调整 img\1x1 里的文件名）" -f $mainTotal, $mainCount, $PLATFORM_MAIN_MAX) -ForegroundColor DarkGray
 }
 if ($mainTotal -eq 0 -or $detailTotal -eq 0) {
   Write-Host "  ⚠️ 有图片目录是空的 —— 先跑 scripts\tb_prep_assets.js 把素材包的图拷进 output\<商品号>\img\ 再跑本编排" -ForegroundColor Yellow
