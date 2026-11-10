@@ -5,6 +5,13 @@
   [string]$Shop = '',
   [int]$Port = 0,           # 0 = 按 -Shop / config.shops / default_port 解析
   [string]$ProductDir = '',
+  # ★ 素材包根目录（如 C:\...\地毯发布素材包）。给了就**自动**做数据管道：
+  #   找 商品信息.xlsx → tb_build.py → tb_prep_assets.js（拷图到 output\<商品号>\img）。
+  #   这样"安装后只要把素材包路径给它"就能一条命令跑完，不用先手工跑 python。
+  [string]$Pack = '',
+  [double]$ListPrice = 0,   # 一口价；0 = 让 tb_build 取最低 SKU 价（**会明确打印出来**）
+  [string]$SizeSort = 'source',   # source = 照源表顺序；natural = 按数值(宽度优先)
+  [switch]$DryRun,          # 只做自检 + 数据准备 + 打印计划，**不碰页面**
   [int]$MainLimit = 0,      # 0 = 按 output\<商品号>\img\1x1 里的实际张数（= 素材目录口径）
   [int]$DetailBatch = 20    # 详情图每批张数：实测一批喂 >20 会被截断
 )
@@ -27,6 +34,42 @@ $shopNames = @()
 if ($cfg -and $cfg.PSObject.Properties.Name -contains 'shops' -and $cfg.shops) {
   $shopNames = @($cfg.shops.PSObject.Properties.Name | Where-Object { $_ })
 }
+
+# ★★ 首次运行**自动生成 config.json**：装完就报"shops 里没有店"是最常见的卡点。
+#   规则：给了 -Shop 就直接写进去（端口取 -Port / default_port / 9120），
+#        没给且终端是交互的 → 问一次；非交互（被脚本调用/重定向）→ 打印怎么写，然后停。
+if ($shopNames.Count -eq 0) {
+  $newPort = if ($Port -gt 0) { $Port } elseif ($cfg -and $cfg.default_port) { [int]$cfg.default_port } else { 9120 }
+  $newShop = $Shop
+  if (-not $newShop -and -not [Console]::IsInputRedirected) {
+    Write-Host "首次运行：config.json 里还没有登记店铺。" -ForegroundColor Cyan
+    $newShop = (Read-Host "  你的店名（如 贝语辰的小店3）").Trim()
+    $pIn = (Read-Host ("  这个店的 Chrome 调试端口（直接回车 = {0}）" -f $newPort)).Trim()
+    if ($pIn -match '^\d+$') { $newPort = [int]$pIn }
+  }
+  if ($newShop) {
+    $base = if ($cfg) { $cfg } else { [pscustomobject]@{} }
+    $obj = [ordered]@{}
+    foreach ($k in @('chrome', 'chrome_profile', 'node', 'npm', 'python', 'playwright_core', 'workdir')) {
+      $obj[$k] = if ($cfg -and $cfg.PSObject.Properties.Name -contains $k) { $cfg.$k } else { '' }
+    }
+    $obj['default_port'] = $newPort
+    $obj['reuse_profile'] = $true
+    $obj['shops'] = [ordered]@{}
+    $obj['shops'][$newShop] = [ordered]@{ port = $newPort; note = '首次运行自动登记' }
+    $json = ($obj | ConvertTo-Json -Depth 6)
+    [System.IO.File]::WriteAllText($cfgFile, $json, [System.Text.UTF8Encoding]::new($false))
+    Write-Host ("✓ 已写入 config.json：店「{0}」端口 {1}（其余字段留空 = 自动探测）" -f $newShop, $newPort) -ForegroundColor Green
+    $cfg = Get-Content $cfgFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $shopNames = @($newShop)
+  } else {
+    Write-Host "★ config.json 里没有登记店铺 → 先登记一家，再重跑：" -ForegroundColor Red
+    Write-Host '   直接加参数： -Shop "你的店名" -Port 9120    （本脚本会帮你写进 config.json）'
+    Write-Host '   或手工编辑 config.json 的 "shops": { "你的店名": { "port": 9120 } }'
+    exit 1
+  }
+}
+
 $usePort = 0
 if ($Port -gt 0) {
   $usePort = $Port
@@ -61,19 +104,50 @@ $pre = @{}
 if ($Shop) { $pre['Shop'] = $Shop }
 if ($Port -gt 0) { $pre['Port'] = $Port }
 if ($ProductDir) { $pre['ProductDir'] = $ProductDir }
+# -DryRun 只验"装好了没" → 不查端口/登录态（没开浏览器也能跑，新人零成本确认安装）
+if ($DryRun) { $pre['SkipCdp'] = $true }
 & "$PSScriptRoot\preflight.ps1" @pre
-if ($LASTEXITCODE -ne 0) {
+# ⚠️ preflight 的退出码约定是：0=全过 / 1=有阻断 / **2=只有警告（可以开工）**。
+#    原来写的是 `-ne 0` 就停 → 只要有一条警告（例如 -SkipCdp、页面数偏多）就被误判成环境不通。
+$preCode = $LASTEXITCODE
+if ($preCode -eq 1) {
   Write-Host ""
   Write-Host "★ 环境不通（见上面 preflight 结果）→ 已在开工前停下，未改任何东西。"
   Write-Host "  起浏览器（**不代登录**，你自己登千牛）： powershell -File `"$PSScriptRoot\open_browser.ps1`""
   exit 1
 }
+if ($preCode -eq 2) { Write-Host "⚠ 自检有警告（不阻断）→ 继续" -ForegroundColor Yellow }
 Write-Host ""
 
-if (-not (Test-Path $prod)) {
-  Write-Host "★ 找不到 $prod —— 先跑数据管道把素材包读成 product.json + SKU 导入表："
-  Write-Host "    python scripts\tb_build.py --xlsx `"<素材包>\发品excel\<商品号>.xlsx`" --product-id $ProductId --out output\$ProductId"
-  Write-Host "    （换过类目还要加 --from-template output\_downloads\SKU模板_<catId>_*.xls，模板用 scripts\tb_download_template.js 下）"
+# ★★ 数据准备：给了 -Pack 就**自动**把素材包跑成 product.json + SKU 导入表 + img。
+#   这是"装完一条命令能跑"的关键一步 —— 原来只打印一段提示就 exit 1，新人必然卡在这儿。
+if ($Pack) {
+  Write-Host "==== 数据准备（-Pack：素材包 → product.json / SKU 导入表 / 图片）====" -ForegroundColor Cyan
+  $packOut = @(& "$PSScriptRoot\build_from_pack.ps1" -Pack $Pack -ProductId $ProductId -CatId $CatId -ListPrice $ListPrice -SizeSort $SizeSort 2>&1)
+  $packOut | ForEach-Object { Write-Host $_ }
+  # ★ 从 build_from_pack 最后一行 PRODUCT_ID= 取回真实商品号（可能被素材目录名改写）。
+  #   别用 -match + $Matches（在 ForEach-Object/管道里 $Matches 会被覆盖，实测没解析上）→ 用 StartsWith。
+  $prefix = 'PRODUCT_ID='
+  foreach ($line in @($packOut)) {
+    $s = ("" + $line).Trim()
+    if ($s.StartsWith($prefix)) { $ProductId = $s.Substring($prefix.Length).Trim() }
+  }
+  Write-Host ("   → 本次商品号：" + $ProductId) -ForegroundColor Cyan
+  # 商品号可能被素材目录名改写 → 路径要重新指向
+  $img = "output\$ProductId\img"
+  $prod = "output\$ProductId\product.json"
+  if (-not (Test-Path $prod)) {
+    Write-Host "★ 数据准备没成功（没有 $prod）→ 先解决上面 build_from_pack 报的问题，再重跑" -ForegroundColor Red
+    exit 1
+  }
+  Write-Host ""
+} elseif (-not (Test-Path $prod)) {
+  Write-Host "★ 找不到 $prod —— 两种办法："
+  Write-Host "   ① 推荐：给 -Pack 让本脚本自动做数据管道，例："
+  Write-Host '      -Pack "D:\...\地毯发布素材包" -ProductId xxx -CatId 50000582 -Cat "居家布艺 > 地毯"'
+  Write-Host "   ② 手工跑（等价于 ① 内部做的事）："
+  Write-Host "      python scripts\tb_build.py --xlsx `"<素材包>\商品信息.xlsx`" --product-id $ProductId --out output\$ProductId"
+  Write-Host "      node   scripts\tb_prep_assets.js --pack `"<素材包>`" --product output\$ProductId\product.json"
   exit 1
 }
 
@@ -141,6 +215,28 @@ $steps['7b verify spec images']   = "node tests\verify_spec_images.js"
 $steps['8 spec confirm']          = "node scripts\tb_spec_add_image.js --confirm"
 $steps['9 checklist']             = "node scripts\tb_checklist.js --product $prod"
 $steps['10 save draft']           = "node scripts\tb_save_draft.js"
+
+# ★ -DryRun：只做"自检 + 数据准备"，把**将要执行的每一步**列出来，**不碰任何页面**。
+#   给第一次装好的人一个零风险确认方式（不用拿真店铺试）。
+if ($DryRun) {
+  Write-Host ""
+  Write-Host "==================== DryRun：只打印计划，不动页面 ====================" -ForegroundColor Cyan
+  Write-Host ("商品号   : " + $ProductId)
+  Write-Host ("类目     : " + $Cat + "  (catId " + $CatId + ")")
+  Write-Host ("端口     : " + $(if ($env:TB_PORT) { $env:TB_PORT } else { "（未解析）" }) + $(if ($Shop) { "  店：$Shop" } else { "" }))
+  Write-Host ("product.json : " + $(if (Test-Path $prod) { "✓ 已就绪" } else { "✗ 缺失（正式跑时给 -Pack 会自动生成）" }))
+  Write-Host ("图片素材 : 1:1 " + $mainTotal + " 张（本次传 " + $mainCount + "） / 详情 " + $detailTotal + " 张（每批 " + $DetailBatch + "）")
+  Write-Host ""
+  Write-Host ("将按顺序执行 " + $steps.Count + " 步：") -ForegroundColor Green
+  $i = 0
+  foreach ($k in $steps.Keys) {
+    $i++
+    Write-Host ("  {0,2}. {1,-24} {2}" -f $i, $k, $steps[$k])
+  }
+  Write-Host ""
+  Write-Host "★ DryRun 结束：什么都没有提交、没有打开页面。去掉 -DryRun 即可正式跑。" -ForegroundColor Yellow
+  exit 0
+}
 
 $bad = @()
 foreach ($k in $steps.Keys) {

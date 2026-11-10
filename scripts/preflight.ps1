@@ -18,7 +18,8 @@ param(
   [string]$Shop = "",
   [int]$Port = 0,
   [string]$ProductDir = "",
-  [switch]$Quiet
+  [switch]$Quiet,
+  [switch]$SkipCdp      # 只查"装好了没"（运行环境/依赖/playwright-core/素材），**不查端口与登录态**
 )
 
 . (Join-Path $PSScriptRoot 'resolve_env.ps1')
@@ -33,18 +34,43 @@ function Ok($msg)   { if (-not $Quiet) { Write-Host ("  [ OK ] " + $msg) -Foregr
 function Bad($msg)  { Write-Host ("  [FAIL] " + $msg) -ForegroundColor Red; $script:blockers += $msg }
 function Warn($msg) { Write-Host ("  [warn] " + $msg) -ForegroundColor Yellow; $script:warns += $msg }
 function Head($msg) { Write-Host ""; Write-Host ("== " + $msg) -ForegroundColor Cyan }
+# ★ 失败时给出**确切的安装办法**（不是只说"缺 X"）。第一次用的人只要照抄这一行就能补上。
+function Hint($msg) { Write-Host ("         → " + $msg) -ForegroundColor DarkGray }
 
 Write-Host "==== 淘宝上架技能 · 开工前自检 ====" -ForegroundColor Cyan
 
 Head "1) 运行时"
-if ($e.node -and (Test-Path $e.node)) { Ok "node = $($e.node)" } else { Bad "找不到 node —— 装 Node.js 或在 config.json 里写 node 路径" }
-if ($e.python -and (Test-Path $e.python)) { Ok "python = $($e.python)" } else { Bad "找不到 python —— 装 Python 3 或在 config.json 里写 python 路径" }
-if ($e.chrome -and (Test-Path $e.chrome)) { Ok "chrome = $($e.chrome)" } else { Warn "没解析到 chrome.exe（只有要新开浏览器时才需要）" }
+if ($e.node -and (Test-Path $e.node)) {
+  Ok "node = $($e.node)"
+} else {
+  Bad "找不到 node —— 装 Node.js 或在 config.json 里写 node 路径"
+  Hint '装 Node.js（任选一）：'
+  Hint '  winget install OpenJS.NodeJS.LTS'
+  Hint '  或去 https://nodejs.org/ 下 LTS 版装完重开终端'
+  Hint '  或在 config.json 写 "node": "C:\\Program Files\\nodejs\\node.exe"'
+}
+if ($e.python -and (Test-Path $e.python)) {
+  Ok "python = $($e.python)"
+} else {
+  Bad "找不到 python —— 装 Python 3 或在 config.json 里写 python 路径"
+  Hint '装 Python 3：winget install Python.Python.3.12（或 https://www.python.org/downloads/，安装时勾 Add to PATH）'
+  Hint '或在 config.json 写 "python": "C:\\Python312\\python.exe"'
+}
+if ($e.chrome -and (Test-Path $e.chrome)) {
+  Ok "chrome = $($e.chrome)"
+} else {
+  Warn "没解析到 chrome.exe（只有要新开浏览器时才需要）"
+  Hint '装 Chrome：winget install Google.Chrome（或 https://www.google.com/chrome/）'
+  Hint '若 Chrome 装在别处：config.json 里写 "chrome": "…\\chrome.exe"'
+}
 
 Head "2) Python 依赖"
 if ($e.python -and (Test-Path $e.python)) {
   $dep = & $e.python -c "import openpyxl, PIL; print('openpyxl', openpyxl.__version__, '| Pillow', PIL.__version__)" 2>&1
-  if ($LASTEXITCODE -eq 0) { Ok "$dep" } else { Bad "缺依赖：$dep（该解释器要装 openpyxl + Pillow）" }
+  if ($LASTEXITCODE -eq 0) { Ok "$dep" } else {
+    Bad "缺依赖：$dep（该解释器要装 openpyxl + Pillow）"
+    Hint ('照抄这一行： "{0}" -m pip install openpyxl Pillow' -f $e.python)
+  }
 }
 
 Head "3) playwright-core"
@@ -67,6 +93,10 @@ if ($e.node -and (Test-Path $e.node)) {
   }
 }
 
+if ($SkipCdp) {
+  Head "4) CDP 端口 + 千牛登录态（按店）"
+  Warn "跳过（-SkipCdp：只查安装是否完整，不查浏览器与登录态）"
+} else {
 Head "4) CDP 端口 + 千牛登录态（按店）"
 # ★ 不写死店铺：以 config.shops 为准；不传 -Shop 就把登记的店逐家查一遍。
 # ⚠️ 空对象 `"shops": {}` 的 `.PSObject.Properties.Name` 会返回**一个 $null 元素**（`@($null)` 长度是 1）：
@@ -113,6 +143,7 @@ foreach ($t in $targets) {
   } catch {
     Bad "[$($t.name)] 端口 $tp 不可达 —— 该店 Chrome 没开、或没带 --remote-debugging-port=$tp（可用 scripts/open_browser.ps1 -Port $tp）"
   }
+}
 }
 
 Head "5) 商品素材（可选）"

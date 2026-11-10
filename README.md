@@ -53,6 +53,22 @@ powershell -File "<技能目录>\scripts\open_browser.ps1"
 
 ---
 
+## 第 2.5 步：确认装好了没（零风险，不用碰真店）
+
+```powershell
+powershell -File "<技能目录>\scripts\run_listing.ps1" -DryRun
+```
+
+`-DryRun` **只做三件事**：环境自检（缺 Node/Python/Chrome/依赖会直接告诉你**怎么装**）、
+数据准备（如果给了 `-Pack`）、打印**将要执行的每一步**。**不打开任何页面、不提交任何东西。**
+
+- 没开浏览器也能跑（它会跳过端口/登录检查）；
+- 装完想确认"我这边齐了吗"，用这条就够了。
+
+看到最后 `★ DryRun 结束：什么都没有提交、没有打开页面。` 就说明安装成功。
+
+---
+
 ## 第 3 步：一条命令跑
 
 素材包要长这样（**素材包由你自己提供**）：
@@ -64,24 +80,36 @@ powershell -File "<技能目录>\scripts\open_browser.ps1"
     1比1主图\   3比4主图\   宝贝详情\   规格图片\   SKU搜索主图\
 ```
 
-跑：
+跑（**只给素材包路径就行**，数据管道由脚本自己跑）：
 
 ```powershell
 powershell -File "<技能目录>\scripts\run_listing.ps1" `
-  -ProductId "<商品标识>" `
+  -Pack "D:\你的素材包" `
   -CatId <catId> `
   -Cat "居家布艺 > 地毯" `
   -Shop "你的店名"        # 多店时必填；单店可省（会自动取 config.json 里那一家）
 ```
 
+它会自己做完这几件事（不需要你先手工执行 python）：
+
+1. 在 `<素材包>` 里找 `商品信息.xlsx`（老布局也认：`发品excel\<商品号>.xlsx`）；
+2. 从 `淘宝\` 下**唯一那个目录**自动认出商品标识（`-ProductId` 可省）；
+3. 找该类目的官方 SKU 模板，没有就**尝试自动下载**（下不到只警告，并告诉你补救办法）；
+4. 跑 `tb_build.py` → `product.json` + `sku_import_官方模板.xlsx`；
+5. 跑 `tb_prep_assets.js` → 把图拷进 `output\<商品标识>\img\`。
+
 **参数**
 
 | 参数 | 说明 |
 |---|---|
-| `-ProductId` | 商品标识（= 素材包 `淘宝\<标识>` 的目录名；也是 `output\<标识>` 的名字） |
+| `-Pack` | **素材包根目录**。给了就自动做数据管道（见上面 1~5） |
+| `-ProductId` | 商品标识（= `淘宝\<标识>` 目录名）。**省略时会自动取 `淘宝\` 下唯一的目录** |
 | `-CatId` / `-Cat` | 类目 catId + 完整路径（路径用 ` > ` 分隔） |
-| `-Shop` | 店名，对应 `config.json` 的 `shops`。**同时决定用哪个 CDP 端口** |
+| `-Shop` | 店名，对应 `config.json` 的 `shops`。**同时决定用哪个 CDP 端口**；首次运行会给 `config.json` 自动登记 |
 | `-Port` | 直接指定端口（覆盖 `-Shop` 推导）。只测某端口时用 |
+| `-DryRun` | 只自检 + 数据准备 + 打印计划，**不碰页面** |
+| `-ListPrice` | 一口价。不传 = 取**最低 SKU 价**，并会明确打印出来（必须落在有库存 SKU 的价里） |
+| `-SizeSort` | `source`（照源表）/ `natural`（按数值，宽度优先） |
 | `-ProductDir` | 顺带把商品素材目录交给 preflight 检查 |
 | `-MainLimit` | 1:1 主图本次传几张（默认 0 = 目录里几张就传几张） |
 | `-DetailBatch` | 详情图每批张数（默认 20；**一批喂太多会被平台截断**） |
