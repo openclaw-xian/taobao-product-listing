@@ -10,10 +10,13 @@
 
 **完成标准**：发布页填到「提交前」且自检通过（一口价合法 / 必填属性无红 / SKU 表逐行齐 / 图片按口径到位），然后停下。
 
-**当前状态（2026-10-14）**：**端到端已跑通，并固化成一条编排命令** ——
-`scripts\run_listing.ps1` 一次走完 16 步（入口 → 标题/属性 → SKU 导入 → 主图 → 详情 → 规格图 →
+**当前状态（2026-11-11）**：**端到端已跑通，并固化成一条编排命令** ——
+`scripts\run_listing.ps1` 一次走完 15~18 步（入口 → 标题/属性 → SKU 导入 → 主图 → 详情 → 规格图 →
 核对清单 → 保存草稿），图片步前后自动清面板，逐步打印并汇总失败项。
-已实测整链全绿：MZB-001（猫抓板，72 SKU）、MZB-003、PE-001（PE 木纹）、DT-雨棚消音垫-1057991085138（地毯）。
+最终代码上实测：猫抓板 `MZB-001`（**54 SKU**，核对清单 **14/14**）、
+地毯 `DT-雨棚消音垫-1057991085138`（**99 SKU**，**14/14**）、`PE-001`（PE 木纹）；
+墙纸 `201802801` 验证到第 9 步（属性 7 个、SKU 对账 **缺 0 多 0**）。
+**入口步失败立即中止** —— 不会再把后面十几步填进上一个类目的页面上（墙纸类目实测踩过）。
 **单步要重做就单跑那一个脚本**（下表），不必整链重跑。
 
 已完成：`config.json` / `resolve_env.ps1` / `preflight.ps1` / `selftest.ps1` / `open_browser.ps1` /
@@ -23,6 +26,22 @@
 `tb_fill_basic.js` / `tb_import_sku.js` / `tb_upload_main.js` / `tb_upload_detail.js` /
 `tb_fill_spec_images.js` + `tb_spec_add_image.js` / `tb_checklist.js` / `tb_save_draft.js` /
 `run_listing.ps1`（编排）/ `SKILL.md`（门禁 **1–20**）/ `references\playbook.md` / `references\RECON.md`。
+**新增（2026-11-11）**：`make_pack_skeleton.ps1` + `pack_meta.js` + `make_pack_skeleton.py`
+（**没有素材包时按类目生成骨架**）/ `tests\verify_spec_images.js`（规格图逐格核对）/
+`templates\素材包样例-地毯50000582\`（能被读通的素材包样例 + 三个类目的结构差异表）。
+
+**没有素材包怎么办**：`scripts\run_listing.ps1` 之外多一个入口 ——
+
+```powershell
+& "<技能>\scripts\make_pack_skeleton.ps1" -CatId 50003280 -Out "D:\我的素材包"
+```
+
+它打开该类目发布页读**属性清单**（属性名 + 是否必填）、下该类目**官方 SKU 模板**（规格列以它为准，
+单层/两层也由它决定）、拼出 `商品信息.xlsx` + 素材目录，最后自动拿生成的包跑一次 `-DryRun`。
+生成的 Excel 里「填写说明」sheet 是逐列填写清单（必填/怎么填/示例），另有「六、最少要填什么」7 条。
+
+注意：属性列与 R4 元数据**按类目**，换类目必须重新生成，不能手改或套用别的类目；
+`templates\素材包样例-地毯50000582\` 只是**地毯类目的样例**，不是通用模板。
 
 **没做的（用户已定，不是待办）**：`tests\fixture_out` 回归夹具（`selftest.ps1` 第 7b 项会 warn）；
 批量 SKU 搜索主图（`tb_fill_sku_images.js` 已就位，但没接进编排，且多数商品素材是 0 张）；
@@ -40,7 +59,7 @@
 **开工前先跑一条命令**：
 
 ```powershell
-$skillRoot = "C:\Users\<你>\.config\mimocode\skills\taobao-product-listing"
+$skillRoot = "C:\Users\Administrator\.config\mimocode\skills\taobao-product-listing"
 & "$skillRoot\scripts\selftest.ps1" -Quick   # 机械检查（BOM/语法/门禁编号/必备文件/config/依赖）
 & "$skillRoot\scripts\selftest.ps1"          # 再去掉 -Quick：连 CDP 端口看**千牛登录态**
 ```
@@ -57,7 +76,7 @@ $skillRoot = "C:\Users\<你>\.config\mimocode\skills\taobao-product-listing"
 
 ## 2. 目录与文件
 
-技能根：`C:\Users\<你>\.config\mimocode\skills\taobao-product-listing\`
+技能根：`C:\Users\Administrator\.config\mimocode\skills\taobao-product-listing\`
 
 | 文件 | 作用 |
 |---|---|
@@ -99,7 +118,7 @@ $skillRoot = "C:\Users\<你>\.config\mimocode\skills\taobao-product-listing"
 ## 3. 标准作业流程
 
 ```powershell
-$skillRoot = "C:\Users\<你>\.config\mimocode\skills\taobao-product-listing"
+$skillRoot = "C:\Users\Administrator\.config\mimocode\skills\taobao-product-listing"
 . "$skillRoot\scripts\resolve_env.ps1"; Show-TbEnv        # 变量在 $TbEnv
 & "$skillRoot\scripts\preflight.ps1" -ProductDir "<素材包>\淘宝\<商品号>"   # 缺什么一次报清
 
