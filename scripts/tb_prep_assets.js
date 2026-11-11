@@ -38,6 +38,9 @@ console.log('源:', SRC);
 console.log('目标:', DST, '| 颜色:', COLORS.join('/'));
 
 const MAP = { '1比1主图': '1x1', '3比4主图': '3x4', '宝贝详情': 'detail', '规格图片': 'spec', 'SKU搜索主图': 'skusearch' };
+// 只认图片：素材目录里可能放说明文件（.txt/.md），原来把它们也算进"张数"，
+// 会让人以为已经准备了图（实测：模板里一个「把图放这里.txt」被报成「1x1: 1 个」）。
+const IMG_RE = /\.(jpe?g|png|webp|gif|bmp)$/i;
 for (const [k, v] of Object.entries(MAP)) {
   const s = path.join(SRC, k);
   const d = path.join(DST, v);
@@ -45,6 +48,7 @@ for (const [k, v] of Object.entries(MAP)) {
   let n = 0;
   if (fs.existsSync(s)) {
     for (const f of fs.readdirSync(s)) {
+      if (!IMG_RE.test(f)) continue;
       const sp = path.join(s, f);
       if (fs.statSync(sp).isFile()) { fs.copyFileSync(sp, path.join(d, f)); n++; }
     }

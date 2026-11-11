@@ -316,13 +316,30 @@ async function nextStep(page) {
     say('⑤ 品牌后: 品牌值 =', afterBrand.品牌值, '| 下一步disabled =', afterBrand.下一步disabled);
 
     if (afterBrand.下一步disabled) {
-      out({ ok: false, 步骤: '下一步', why: 'still_disabled', 状态: afterBrand });
-      process.exitCode = 1;
-      return;
+      // ★ 类目页还有一批必填填不动（实测墙纸 201802801：计价单位 / 采购地 / 图案 / 材质 / 面层工艺
+      //   全部「找不到容器」）→「确认，下一步」永远是灰的，流程卡死在类目页。
+      //   兜底：**直连 publish.htm** 跳过类目页（实测该 URL 落地后 在表单=true、catId 正确、
+      //   类目属性 7 个都读得到），那批必填交给表单页处理。
+      say('  ⚠ 类目页「确认，下一步」仍灰着 → 改用直连 publish.htm 跳过类目页');
+      const jump = 'https://item.upload.taobao.com/sell/v2/publish.htm?catId=' + CATID +
+        '&fromAICategory=true&keyProps=%7B%7D&fromAIPublish=true&newRouter=1';
+      await page.goto(jump, { waitUntil: 'load', timeout: 90000 }).catch((e) => say('  直连 goto 失败:', e.message.slice(0, 50)));
+      await sleep(12000);
+      const afterJump = await page.evaluate(formState);
+      say('  直连落地:', String(afterJump.url).slice(0, 90), '| 在表单 =', afterJump.在表单, '| catId =', afterJump.catId);
+      if (!(afterJump.在表单 && (!CATID || afterJump.catId === CATID))) {
+        out({ ok: false, 步骤: '下一步', why: 'still_disabled', 状态: afterBrand });
+        process.exitCode = 1;
+        return;
+      }
+      say('  ✓ 已直连进入表单（类目页那批必填留给表单页）');
+      // 直连不会带上类目页选过的品牌 → 表单页的品牌由 tb_fill_basic 填，这里不再要求品牌值
+      brandSkipped = true;
+    } else {
+      const nx = await nextStep(page);
+      say('⑥ 点「确认，下一步」:', JSON.stringify(nx));
+      await sleep(15000);
     }
-    const nx = await nextStep(page);
-    say('⑥ 点「确认，下一步」:', JSON.stringify(nx));
-    await sleep(15000);
     // ★ 收尾：关掉**其它** publish.htm 页 —— 多个发布页并存时，后续脚本"取第一个页面"会拿到错的商品
     //   （实测踩到：PE-001 的 SKU 导进了猫抓板的页面）
     try {

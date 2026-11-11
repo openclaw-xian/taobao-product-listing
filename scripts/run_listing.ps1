@@ -259,7 +259,16 @@ foreach ($k in $steps.Keys) {
   $o = (Invoke-Expression $steps[$k] 2>&1 | Out-String)
   $code = $LASTEXITCODE
   Write-Host $o.TrimEnd()
-  if ($code -ne 0) { $bad += ($k + " (exit=" + $code + ")"); Write-Host "  [X] failed" }
+  if ($code -ne 0) { $bad += ($k + " (exit=" + $code + ")"); Write-Host "  [X] failed" 
+    # ★ 入口步失败 → 页面还停在**旧类目**，后面每一步都会填到错误的页面上
+    #   （实测墙纸 201802801：类目页有 5 个必填填不了 → 没进表单 → 后 14 步全跑在猫抓板页上，
+    #     最后只有核对清单报出「类目 catId 读回=50003280 期望=201802801」）。
+    #   这种情况必须立刻中止，不能继续往下填。
+    if ($k -like '1 entry*') {
+      Write-Host "  ★ 入口没进到目标类目 → 中止，后面步骤不再执行（避免把数据填进别的类目页面）" -ForegroundColor Red
+      break
+    }
+  }
   elseif ([string]::IsNullOrWhiteSpace($o)) { $bad += ($k + " (无输出=疑似空跑)"); Write-Host "  [X] 无输出" }
 }
 Write-Host ""

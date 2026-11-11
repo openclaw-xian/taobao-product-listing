@@ -152,7 +152,9 @@ const pageRead = () => {
     chk('一口价', st.一口价, String(PRODUCT.list_price) + '（∈有库存SKU价）', lp === Number(PRODUCT.list_price) && PRICES.has(lp));
     chk('总库存', st.总库存, String(EXP_STOCK) + '（= Σ各 SKU 库存）', Number(st.总库存) === EXP_STOCK);
     chk('SKU 行数', sku.ok ? sku.n : '扫描失败:' + sku.why, EXPECT_N, sku.ok && sku.n === EXPECT_N);
-    chk('规格区', st.规格区, 'SKU模式 · 单层', /SKU模式/.test(String(st.规格区)));
+    // 期望不再写死「单层」：单列类目（猫抓板）是「单层展示」，颜色×尺寸类目（地毯）是「多层展示」，
+    // 写死会让多层类目显示「期望=单层」却照样打 ✓，看着像漏判。层级以读回里的【】为准。
+    chk('规格区', st.规格区, 'SKU模式 ·（单层/多层按类目实际，读回里已带）', /SKU模式/.test(String(st.规格区)));
     // 1:1 主图 5 张已填 + 3:4 按口径留空 ⇒ 空槽总数应 = 5
     // 主图槽位**按类目实际**（猫抓板 5 槽 / 墙纸 6 槽）→ 不再写死 5；全空会是 10+，所以用 ≤8 判"已填过"
     chk('主图/3:4 空槽', st.空槽总数, '≤8（1:1 已填、3:4 按口径留空）', Number(st.空槽总数) <= 8);
